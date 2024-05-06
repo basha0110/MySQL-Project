@@ -1,0 +1,27 @@
+#####  Installing Percona Toolkit  #####
+
+https://docs.percona.com/percona-toolkit/installation.html
+
+
+
+
+
+gesti@gestitest:~$ sudo apt-get install percona-toolkit
+
+
+Generating an instance UUID for statistics
+
+During the installation process, the percona-toolkit installer records a unique identifier specific to the given percona-toolkit instance. This ID is a the product UUID stored in /sys/class/dmi/id/product_uuid. The installer copies the product_uuid to /etc/percona-toolkit/.percona.toolkit.uuid.
+
+This unique identifier is used when collecting statistics about the usage of percona-toolkit. Note that no other information is gathered for this purpose.
+
+In cases when the installer is not able to read the contents of /sys/class/dmi/id/product_uuid, a random UUID is generated. A random UUID is also generated if percona-toolkit is run from the binary in the tar.gz file.
+
+
+Alternative Install Methods
+
+If you want to download a specific tool, use the following address: http://www.percona.com/get
+
+For example, to download the pt-summary tool, run:
+
+gesti@gestitest:~$ sudo wget percona.com/get/pt-summary
