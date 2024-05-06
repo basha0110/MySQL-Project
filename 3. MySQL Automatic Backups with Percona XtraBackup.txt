@@ -1,0 +1,621 @@
+######  MySQL Automatic Backups with Percona XtraBackup  ###### 
+
+Note. Do not use root user
+
+1. Configuring a Systems Backup User and Assigning Permissions
+
+On Ubuntu 22.04, a backup user and corresponding backup group is already available. Confirm this by checking the /etc/passwd and /etc/group files with the following command:
+
+gesti@gestitest:~$  grep backup /etc/passwd /etc/group
+/etc/passwd:backup:x:34:34:backup:/var/backups:/usr/sbin/nologin
+/etc/group:backup:x:34:
+
+We can add the backup user to the mysql group to safely allow access to the database files and directories. We should also add our sudo user to the backup group so that we can access the files we will back up
+
+gesti@gestitest:~$ sudo usermod -aG mysql backup
+gesti@gestitest:~$ sudo usermod -aG backup ${USER}
+
+Next, we need to make the /var/lib/mysql directory and its subdirectories accessible to the mysql group by adding group execute permissions. Otherwise, the backup user will be unable to enter those directories, even though it is a member of the mysql group
+
+gesti@gestitest:~$ sudo find /var/lib/mysql -type d -exec chmod 750 {} \;
+
+Our backup user now has the access it needs to the MySQL directory
+
+2. Creating the Backup Assets
+
+Create a file such as /etc/mysql/mysql.conf.d/backup.cnf with the following data 
+
+[client]
+user=backup
+password="5RlUSJ!-$ZRx)2?N<g3M%p"
+
+Give ownership of the file to the backup user 
+
+gesti@gestitest:~$ sudo chown backup /etc/mysql/mysql.conf.d/backup.cnf
+
+If you want to restrict the permissions so that no other users can access the file (we will skip for the moment)
+gesti@gestitest:~$ sudo chmod 600 /etc/mysql/mysql.conf.d/backup.cnf
+
+
+Create a Backup Root Directory
+We have created the directory /data/backups/ . Lets assign ownership of the/data/backups directory to the backup user and group ownership to the mysql group
+
+gesti@gestitest:~$ sudo chown backup:mysql /data/backups
+
+Create an Encryption Key to Secure the Backup Files
+
+We can create an encryption key within the backup root directory with the openssl command
+
+gesti@gestitest:~$ printf '%s' "$(openssl rand -base64 24)" | sudo tee /data/backups/encryption_key && echo
+CQqker3MAXUcb12Qz+dG7J2Dm1yn3TxR
+
+assign ownership to the backup user and deny access to all other users:
+
+gesti@gestitest:~$ sudo chown backup:backup /data/backups/encryption_key
+gesti@gestitest:~$ sudo chmod 600 /data/backups/encryption_key
+
+3. Creating the Backup and Restore Scripts
+
+
+In order to make our backup and restore steps repeatable, we will script the entire process. We will create the following scripts:
+
+        backup-mysql.sh: This script backs up the MySQL databases, encrypting and compressing the files in the process. It creates full and incremental backups and automatically organizes content by day. By default, the script maintains 3 days worth of backups.
+		
+        extract-mysql.sh: This script decompresses and decrypts the backup files to create directories with the backed up content.
+		
+        prepare-mysql.sh: This script “prepares” the back up directories by processing the files and applying logs. Any incremental backups are applied to the full backup. Once the prepare script finishes, the files are ready to be moved back to the data directory.
+
+
+
+You can view the scripts in the repository for this tutorial on GitHub https://github.com/do-community/ubuntu-1604-mysql-backup at any time. If you do not want to copy and paste the contents below, you can download them directly from GitHub by typing:
+
+gesti@gestitest:~$ cd /tmp
+gesti@gestitest:/tmp$ curl -LO https://raw.githubusercontent.com/do-community/ubuntu-1604-mysql-backup/master/backup-mysql.sh
+gesti@gestitest:/tmp$ curl -LO https://raw.githubusercontent.com/do-community/ubuntu-1604-mysql-backup/master/extract-mysql.sh
+gesti@gestitest:/tmp$ curl -LO https://raw.githubusercontent.com/do-community/ubuntu-1604-mysql-backup/master/prepare-mysql.sh
+gesti@gestitest:/tmp$ ls -lsa
+total 412
+  4 -rw-rw-r--  1 gesti gesti   2781 Apr 30 08:56 backup-mysql.sh
+  4 -rw-rw-r--  1 gesti gesti   2655 Apr 30 08:56 extract-mysql.sh
+  4 -rw-rw-r--  1 gesti gesti   2734 Apr 30 08:57 prepare-mysql.sh
+
+Be sure to inspect the scripts after downloading to make sure they were retrieved successfully and that you approve of the actions they will perform. If you are satisfied, mark the scripts as executable and then move them into the /usr/local/bin directory by typing
+
+gesti@gestitest:/tmp$ chmod +x /tmp/{backup,extract,prepare}-mysql.sh
+gesti@gestitest:/tmp$ sudo mv /tmp/{backup,extract,prepare}-mysql.sh /usr/local/bin
+
+   backup-mysql.sh 
+   
+The script has the following functionality:
+Check if xtrabackup is already running and to quit if that is the case
+Creates an encrypted, compressed full backup the first time it is run each day.
+Generates encrypted, compressed incremental backups based on the daily full backup when called again on the same day.
+Maintains backups organized by day. By default, six days of backups are kept. This can be changed by adjusting the days_of_backups parameter within the script.
+When the script is run, a daily directory is created where timestamped files representing individual backups will be written. The first timestamped file will be a full backup, prefixed by full-. Subsequent backups for the day will be incremental backups, indicated by an incremental- prefix, representing the changes since the last full or incremental backup.
+
+Backups will generate a file called backup-progress.log in the daily directory with the output from the most recent backup operation. A file called xtrabackup_checkpoints containing the most recent backup metadata will be created there as well. This file is needed to produce future incremental backups, so it is important not to remove it. A file called xtrabackup_info, which contains additional metadata, is also produced but the script does not reference this file.
+
+The script must look as follows
+################################################################################################################
+
+#!/bin/bash
+
+function CheckProcessStatus {
+retval=""
+if pgrep -x $1 > /dev/null
+then
+    echo "$1 is Running"
+    retval=1
+else
+    echo "$1 is not Running"
+    retval=0
+fi
+return "$retval"
+}
+
+function RunPs {
+running_flag=$1
+if [ $running_flag -eq 0 ]; then
+  echo "no running backup confirmed, moving forward with backup script"
+else
+  echo "backup is already running, exiting  with code 1"
+  exit 1
+fi
+return
+
+}
+
+CheckProcessStatus "xtrabackup"
+ps_flag=$?
+echo "flag is $ps_flag"
+RunPs $ps_flag
+
+export LC_ALL=C
+
+days_of_backups=6  # Must be less than 7
+backup_owner="backup"
+parent_dir="/data/backups"
+defaults_file="/etc/mysql/mysql.conf.d/backup.cnf"
+todays_dir="${parent_dir}/$(date +"%Y-%m-%d")"
+log_file="${todays_dir}/backup-progress.log"
+encryption_key_file="${parent_dir}/encryption_key"
+now="$(date +%m-%d-%Y_%H-%M-%S)"
+processors="$(nproc --all)"
+
+# Use this to echo to standard error
+error () {
+    printf "%s: %s\n" "$(basename "${BASH_SOURCE}")" "${1}" >&2
+    exit 1
+}
+
+trap 'error "An unexpected error occurred."' ERR
+
+sanity_check () {
+    # Check user running the script
+    if [ "$(id --user --name)" != "$backup_owner" ]; then
+        error "Script can only be run as the \"$backup_owner\" user"
+    fi
+    
+    # Check whether the encryption key file is available
+    if [ ! -r "${encryption_key_file}" ]; then
+        error "Cannot read encryption key at ${encryption_key_file}"
+    fi
+}
+
+set_options () {
+    # List the xtrabackup arguments
+    xtrabackup_args=(
+        "--defaults-file=${defaults_file}"
+        "--backup"
+        "--extra-lsndir=${todays_dir}"
+        "--compress"
+        "--stream=xbstream"
+        "--encrypt=AES256"
+        "--encrypt-key-file=${encryption_key_file}"
+        "--parallel=${processors}"
+        "--compress-threads=${processors}"
+        "--encrypt-threads=${processors}"
+       # "--slave-info"
+    )
+    
+    backup_type="full"
+
+    # Add option to read LSN (log sequence number) if a full backup has been
+    # taken today.
+    if grep -q -s "to_lsn" "${todays_dir}/xtrabackup_checkpoints"; then
+        backup_type="incremental"
+        lsn=$(awk '/to_lsn/ {print $3;}' "${todays_dir}/xtrabackup_checkpoints")
+        xtrabackup_args+=( "--incremental-lsn=${lsn}" )
+    fi
+}
+
+rotate_old () {
+    # Remove the oldest backup in rotation
+    day_dir_to_remove="${parent_dir}/$(date --date="${days_of_backups} days ago" +%a)"
+
+    if [ -d "${day_dir_to_remove}" ]; then
+        rm -rf "${day_dir_to_remove}"
+    fi
+}
+
+take_backup () {
+    # Make sure today's backup directory is available and take the actual backup
+    mkdir -p "${todays_dir}"
+    find "${todays_dir}" -type f -name "*.incomplete" -delete
+    xtrabackup "${xtrabackup_args[@]}" --target-dir="${todays_dir}" > "${todays_dir}/${backup_type}-${now}.xbstream.incomplete" 2> "${log_file}"
+    
+    mv "${todays_dir}/${backup_type}-${now}.xbstream.incomplete" "${todays_dir}/${backup_type}-${now}.xbstream"
+}
+
+sanity_check && set_options && rotate_old && take_backup
+
+# Check success and print message
+if tail -1 "${log_file}" | grep -q "completed OK"; then
+    printf "Backup successful!\n"
+    printf "Backup created at %s/%s-%s.xbstream\n" "${todays_dir}" "${backup_type}" "${now}"
+else
+    error "Backup failure! Check ${log_file} for more information"
+fi
+
+################################################################################################################
+
+  extract-mysql.sh
+  
+Unlike the backup-mysql.sh script, which is designed to be automated, this script is designed to be used intentionally when you plan to restore from a backup. Because of this, the script expects you to pass in the .xbstream files that you wish to extract.
+
+The script creates a restore directory within the current directory and then creates individual directories within for each of the backups passed in as arguments. It will process the provided .xbstream files by extracting directory structure from the archive, decrypting the individual files within, and then decompressing the decrypted files.
+
+After this process has completed, the restore directory should contain directories for each of the provided backups. This allows you to inspect the directories, examine the contents of the backups, and decide which backups you wish to prepare and restore.
+
+The script must look as follows
+
+################################################################################################################
+
+#!/bin/bash
+
+export LC_ALL=C
+
+backup_owner="backup"
+encryption_key_file="/data/backups/encryption_key"
+log_file="extract-progress.log"
+number_of_args="${#}"
+processors="$(nproc --all)"
+
+# Use this to echo to standard error
+error () {
+    printf "%s: %s\n" "$(basename "${BASH_SOURCE}")" "${1}" >&2
+    exit 1
+}
+
+trap 'error "An unexpected error occurred.  Try checking the \"${log_file}\" file for more information."' ERR
+
+sanity_check () {
+    # Check user running the script
+    if [ "${USER}" != "${backup_owner}" ]; then
+        error "Script can only be run as the \"${backup_owner}\" user"
+    fi
+    
+    # Check whether the qpress binary is installed
+    if ! command -v qpress >/dev/null 2>&1; then
+        error "Could not find the \"qpress\" command.  Please install it and try again."
+    fi
+    
+    # Check whether any arguments were passed
+    if [ "${number_of_args}" -lt 1 ]; then
+        error "Script requires at least one \".xbstream\" file as an argument."
+    fi
+    
+    # Check whether the encryption key file is available
+    if [ ! -r "${encryption_key_file}" ]; then
+        error "Cannot read encryption key at ${encryption_key_file}"
+    fi
+}
+
+do_extraction () {
+    for file in "${@}"; do
+        base_filename="$(basename "${file%.xbstream}")"
+        restore_dir="./restore/${base_filename}"
+    
+        printf "\n\nExtracting file %s\n\n" "${file}"
+    
+        # Extract the directory structure from the backup file
+        mkdir --verbose -p "${restore_dir}"
+        xbstream -x -C "${restore_dir}" < "${file}"
+
+        xtrabackup_args=(
+            "--parallel=${processors}"
+            "--decrypt=AES256"
+            "--encrypt-key-file=${encryption_key_file}"
+            "--decompress"
+        )
+
+        xtrabackup "${xtrabackup_args[@]}" --target-dir="${restore_dir}"
+        find "${restore_dir}" -name "*.xbcrypt" -exec rm {} \;
+        find "${restore_dir}" -name "*.qp" -exec rm {} \;
+    
+        printf "\n\nFinished work on %s\n\n" "${file}"
+    
+    done > "${log_file}" 2>&1
+}
+
+sanity_check && do_extraction "$@"
+
+ok_count="$(grep -c 'completed OK' "${log_file}")"
+
+# Check the number of reported completions.  For each file, there is an
+# informational "completed OK".  If the processing was successful, an
+# additional "completed OK" is printed. Together, this means there should be 2
+# notices per backup file if the process was successful.
+if (( $ok_count !=  $# )); then
+    error "It looks like something went wrong. Please check the \"${log_file}\" file for additional information"
+else
+    printf "Extraction complete! Backup directories have been extracted to the \"restore\" directory.\n"
+fi
+
+################################################################################################################
+
+   prepare-mysql.sh
+
+The script looks in the current directory for directories beginning with full- or incremental-. It uses the MySQL logs to apply the committed transactions to the full backup. Afterwards, it applies any incremental backups to the full backup to update the data with the more recent information, again applying the committed transactions.
+
+Once all of the backups have been combined, the uncommitted transactions are rolled back. At this point, the full- backup will represent a consistent set of data that can be moved into MySQL’s data directory.
+
+In order to minimize chance of data loss, the script stops short of copying the files into the data directory. This way, the user can manually verify the backup contents and the log file created during this process, and decide what to do with the current contents of the MySQL data directory. The commands needed to restore the files completely are displayed when the command exits.
+
+The script must look as follows
+################################################################################################################
+
+#!/bin/bash
+
+export LC_ALL=C
+
+shopt -s nullglob
+incremental_dirs=( ./incremental-*/ )
+full_dirs=( ./full-*/ )
+shopt -u nullglob
+
+backup_owner="backup"
+log_file="prepare-progress.log"
+full_backup_dir="${full_dirs[0]}"
+
+# Use this to echo to standard error
+error() {
+    printf "%s: %s\n" "$(basename "${BASH_SOURCE}")" "${1}" >&2
+    exit 1
+}
+
+trap 'error "An unexpected error occurred.  Try checking the \"${log_file}\" file for more information."' ERR
+
+sanity_check () {
+    # Check user running the script
+    if [ "${USER}" != "${backup_owner}" ]; then
+        error "Script can only be run as the \"${backup_owner}\" user."
+    fi
+
+    # Check whether a single full backup directory are available
+    if (( ${#full_dirs[@]} != 1 )); then
+        error "Exactly one full backup directory is required."
+    fi
+}
+
+do_backup () {
+    # Apply the logs to each of the backups
+    printf "Initial prep of full backup %s\n" "${full_backup_dir}"
+    xtrabackup --prepare --apply-log-only --target-dir="${full_backup_dir}"
+    
+    for increment in "${incremental_dirs[@]}"; do
+        printf "Applying incremental backup %s to %s\n" "${increment}" "${full_backup_dir}"
+        xtrabackup --prepare --apply-log-only --incremental-dir="${increment}" --target-dir="${full_backup_dir}"
+    done
+    
+    printf "Applying final logs to full backup %s\n" "${full_backup_dir}"
+    xtrabackup --prepare --target-dir="${full_backup_dir}"
+}
+
+sanity_check && do_backup > "${log_file}" 2>&1
+
+# Check the number of reported completions.  Each time a backup is processed,
+# an informational "completed OK" and a real version is printed.  At the end of
+# the process, a final full apply is performed, generating another 2 messages.
+ok_count="$(grep -c 'completed OK' "${log_file}")"
+
+if (( ${ok_count} == ${#full_dirs[@]} + ${#incremental_dirs[@]} + 1 )); then
+    cat << EOF
+Backup looks to be fully prepared.  Please check the "prepare-progress.log" file
+to verify before continuing.
+
+If everything looks correct, you can apply the restored files.
+
+First, stop MySQL and move or remove the contents of the MySQL data directory:
+    
+        sudo systemctl stop mysql
+        sudo mv /var/lib/mysql/ /tmp/
+    
+Then, recreate the data directory and  copy the backup files:
+    
+        sudo mkdir /var/lib/mysql
+        sudo xtrabackup --copy-back --target-dir=${PWD}/$(basename "${full_backup_dir}")
+    
+Afterward the files are copied, adjust the permissions and restart the service:
+    
+        sudo chown -R mysql:mysql /var/lib/mysql
+        sudo find /var/lib/mysql -type d -exec chmod 750 {} \\;
+        sudo systemctl start mysql
+EOF
+else
+    error "It looks like something went wrong.  Check the \"${log_file}\" file for more information."
+fi
+
+################################################################################################################
+
+
+4. Testing the MySQL Backup and Restore Scripts
+
+Perform a Full Backup
+Begin by calling the backup-mysql.sh script with the backup user:
+
+gesti@gestitest:/home$ sudo -u backup backup-mysql.sh
+Backup successful!
+Backup created at /data/backups/2024-05-06/full-04-30-2024_12-12-10.xbstream
+
+
+Let’s move into the daily backup directory and view the contents:
+
+gesti@gestitest:~$ ls -lsa /data/backups/$(date +"%Y-%m-%d")
+total 3572
+   4 drwxrwxr-x  2 backup backup    4096 May  6 10:17 .
+   4 drwxr-xr-x 14 backup mysql     4096 May  6 00:17 ..
+  52 -rw-rw-r--  1 backup backup   50599 May  6 10:17 backup-progress.log
+1624 -rw-rw-r--  1 backup backup 1659502 May  6 00:17 full-05-06-2024_00-17-01.xbstream
+ 188 -rw-rw-r--  1 backup backup  188376 May  6 01:17 incremental-05-06-2024_01-17-01.xbstream
+ 188 -rw-rw-r--  1 backup backup  188376 May  6 02:17 incremental-05-06-2024_02-17-01.xbstream
+ 188 -rw-rw-r--  1 backup backup  188363 May  6 03:17 incremental-05-06-2024_03-17-01.xbstream
+ 188 -rw-rw-r--  1 backup backup  188363 May  6 04:17 incremental-05-06-2024_04-17-01.xbstream
+ 188 -rw-rw-r--  1 backup backup  188366 May  6 05:17 incremental-05-06-2024_05-17-01.xbstream
+ 188 -rw-rw-r--  1 backup backup  188366 May  6 06:17 incremental-05-06-2024_06-17-01.xbstream
+ 188 -rw-rw-r--  1 backup backup  188371 May  6 07:17 incremental-05-06-2024_07-17-02.xbstream
+ 188 -rw-rw-r--  1 backup backup  188369 May  6 08:17 incremental-05-06-2024_08-17-01.xbstream
+ 188 -rw-rw-r--  1 backup backup  188374 May  6 09:17 incremental-05-06-2024_09-17-01.xbstream
+ 188 -rw-rw-r--  1 backup backup  188376 May  6 10:17 incremental-05-06-2024_10-17-01.xbstream
+   4 -rw-rw-r--  1 backup backup     139 May  6 10:17 xtrabackup_checkpoints
+   4 -rw-rw-r--  1 backup backup     736 May  6 10:17 xtrabackup_info
+
+
+
+Here, we see the actual backup file (full-05-06-2024_00-17-01.xbstream in this case), the log of the backup event (backup-progress.log), the xtrabackup_checkpoints file, which includes metadata about the backed up content, and the xtrabackup_info file, which contains additional metadata.
+
+
+
+Perform an Incremental Backup
+
+Now that we have a full backup, we can take additional incremental backups. Incremental backups record the changes that have been made since the last backup was performed. The first incremental backup is based on a full backup and subsequent incremental backups are based on the previous incremental backup.
+
+We should add some data to our database before taking another backup so that we can tell which backups have been applied
+
+Now that there is more current data than our most recent backup, we can take an incremental backup to capture the changes. The backup-mysql.sh script will take an incremental backup if a full backup for the same day exists:
+
+gesti@gestitest:/home$ sudo -u backup backup-mysql.sh
+Backup successful!
+Backup created at /data/backups/2024-05-06/incremental-04-30-2024_12-58-10.xbstream
+
+
+Extract the Backups
+Next, let’s extract the backup files to create backup directories. Due to space and security considerations, this should normally only be done when you are ready to restore the data.
+
+We can extract the backups by passing the .xbstream backup files to the extract-mysql.sh script. Again, this must be run by the backup user:
+
+If you have the following error
+gesti@gestitest:/data/backups/2024-05-06$ sudo -u backup extract-mysql.sh *.xbstream
+extract-mysql.sh: Could not find the "qpress" command.  Please install it and try again.
+
+fix by using  
+
+gesti@gestitest:~$ sudo percona-release enable tools
+gesti@gestitest:~$ sudo apt install qpress
+
+gesti@gestitest:/data/backups/2024-05-06$ sudo -u backup extract-mysql.sh *.xbstream
+Extraction complete! Backup directories have been extracted to the "restore" directory.
+
+The backup directories contains the raw backup files, but they are not yet in a state that MySQL can use though. To fix that, we need to prepare the files
+
+
+Prepare the Final Backup
+
+Next, we will prepare the backup files. To do so, you must be in the restore directory that contains the full- and any incremental- backups. The script will apply the changes from any incremental- directories onto the full- backup directory. Afterwards, it will apply the logs to create a consistent dataset that MySQL can use.
+
+If for any reason you don’t want to restore some of the changes, now is your last chance to remove those incremental backup directories from the restore directory (the incremental backup files will still be available in the parent directory). Any remaining incremental- directories within the current directory will be applied to the full- backup directory.
+
+When you are ready, call the prepare-mysql.sh script. Again, make sure you are in the restore directory where your individual backup directories are located:
+
+gesti@gestitest:/data/backups/2024-05-06/restore$ sudo -u backup prepare-mysql.sh
+Backup looks to be fully prepared.  Please check the "prepare-progress.log" file
+to verify before continuing.
+
+If everything looks correct, you can apply the restored files.
+
+First, stop MySQL and move or remove the contents of the MySQL data directory:
+
+        sudo systemctl stop mysql
+        sudo mv /var/lib/mysql/ /tmp/
+
+Then, recreate the data directory and  copy the backup files:
+
+        sudo mkdir /var/lib/mysql
+        sudo xtrabackup --copy-back --target-dir=/data/backups/2024-05-06/restore/full-04-30-2024_12-12-10
+
+Afterward the files are copied, adjust the permissions and restart the service:
+
+        sudo chown -R mysql:mysql /var/lib/mysql
+        sudo find /var/lib/mysql -type d -exec chmod 750 {} \;
+        sudo systemctl start mysql
+gesti@gestitest:/data/backups/2024-05-06/restore$
+
+Restore the Backup Data to the MySQL Data Directory
+If you are satisfied that everything is in order after reviewing the logs, you can follow the instructions outlined in the prepare-mysql.sh output.
+
+First, stop the running MySQL process
+
+gesti@gestitest:~$ sudo systemctl stop mysql
+gesti@gestitest:~$ sudo systemctl status mysql
+○ mysql.service - MySQL Community Server
+     Loaded: loaded (/lib/systemd/system/mysql.service; enabled; vendor preset: enabled)
+     Active: inactive (dead) since Tue 2024-04-30 14:47:59 CEST; 5s ago
+    Process: 12076 ExecStart=/usr/sbin/mysqld (code=exited, status=0/SUCCESS)
+   Main PID: 12076 (code=exited, status=0/SUCCESS)
+     Status: "Server shutdown complete"
+        CPU: 10min 21.399s
+
+Apr 29 10:21:24 gestitest systemd[1]: Starting MySQL Community Server...
+Apr 29 10:21:27 gestitest systemd[1]: Started MySQL Community Server.
+Apr 30 14:47:58 gestitest systemd[1]: Stopping MySQL Community Server...
+Apr 30 14:47:59 gestitest systemd[1]: mysql.service: Deactivated successfully.
+Apr 30 14:47:59 gestitest systemd[1]: Stopped MySQL Community Server.
+Apr 30 14:47:59 gestitest systemd[1]: mysql.service: Consumed 10min 21.399s CPU time.
+
+
+Since the backup data may conflict with the current contents of the MySQL data directory, we should remove or move the /var/lib/mysql directory. If you have space on your filesystem, the best option is to move the current contents to the /tmp directory or elsewhere in case something goes wrong:
+
+gesti@gestitest:~$ sudo mv /var/lib/mysql/ /tmp
+
+Recreate an empty /var/lib/mysql directory. We will need to fix permissions in a moment, so we do not need to worry about that yet:
+
+gesti@gestitest:~$ sudo mkdir /var/lib/mysql
+
+Now, we can copy the full backup to the MySQL data directory using the xtrabackup utility. Substitute the path to your prepared full backup in the command below:
+
+gesti@gestitest:~$ sudo xtrabackup --copy-back --target-dir=/data/backups/2024-05-06/restore/full-04-30-2024_12-12-10
+.
+.
+.
+.
+2024-04-30T14:50:53.648386+02:00 0 [Note] [MY-011825] [Xtrabackup] completed OK!
+
+
+A running log of the files being copied will display throughout the process. Once the files are in place, we need to fix the ownership and permissions again so that the MySQL user and group own and can access the restored structure:
+
+
+gesti@gestitest:~$ sudo chown -R mysql:mysql /var/lib/mysql
+gesti@gestitest:~$ sudo find /var/lib/mysql -type d -exec chmod 750 {} \;
+
+
+Our restored files are now in the MySQL data directory.
+
+Start up MySQL again to complete the process:
+
+gesti@gestitest:~$ sudo systemctl start mysql.service
+gesti@gestitest:~$ sudo systemctl status mysql.service
+● mysql.service - MySQL Community Server
+     Loaded: loaded (/lib/systemd/system/mysql.service; enabled; vendor preset: enabled)
+     Active: active (running) since Tue 2024-04-30 14:52:47 CEST; 5s ago
+    Process: 16086 ExecStartPre=/usr/share/mysql/mysql-systemd-start pre (code=exited, status=0/SUCCESS)
+   Main PID: 16094 (mysqld)
+     Status: "Server is operational"
+      Tasks: 158 (limit: 3425)
+     Memory: 471.8M
+        CPU: 2.929s
+     CGroup: /system.slice/mysql.service
+             └─16094 /usr/sbin/mysqld
+
+Apr 30 14:52:44 gestitest systemd[1]: Starting MySQL Community Server...
+Apr 30 14:52:47 gestitest systemd[1]: Started MySQL Community Server.
+
+
+Our data has been successfully restored.
+
+After restoring your data, it is important to go back and delete the restore directory. Future incremental backups cannot be applied to the full backup once it has been prepared, so we should remove it. Furthermore, the backup directories should not be left unencrypted on disk for security reasons:
+
+gesti@gestitest:~$ sudo rm -rf /data/backups/$(date +"%Y-%m-%d")/restore
+
+The next time we need a clean copies of the backup directories, we can extract them again from the backup files.
+
+
+Creating a Cron Job to Run Backups Hourly
+Now that we’ve verified that the backup and restore process are working smoothly, we should set up a cron job to automatically take regular backups.
+
+We will create a small script within the /etc/cron.hourly directory to automatically run our backup script and log the results. The cron process will automatically run this every hour:
+Inside, we will call the backup script with the systemd-cat utility so that the output will be available in the journal. We’ll mark them with a backup-mysql identifier so we can easily filter the logs:
+
+
+To not face the error find: Failed to restore initial working directory: /home/gesti: Permission denied execute the commands from a directory where the user backup has access, for example home
+
+gesti@gestitest:/home$ sudo nano /etc/cron.hourly/backup-mysql
+
+#!/bin/bash
+sudo -u backup systemd-cat --identifier=backup-mysql /usr/local/bin/backup-mysql.sh
+
+Save and close the file when you are finished. Make the script executable by typing:
+
+gesti@gestitest:/home$ sudo chmod +x /etc/cron.hourly/backup-mysql
+
+The backup script will now run hourly. The script itself will take care of cleaning up backups older than six days ago.
+
+We can test the cron script by running it manually:
+
+gesti@gestitest:/home$ sudo /etc/cron.hourly/backup-mysql
+
+After it completes, check the journal for the log messages by typing:
+
+sudo journalctl -t backup-mysql
+
+
+
