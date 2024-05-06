@@ -1,0 +1,258 @@
+######  Restore a Single Table Using Percona Xtrabackup  ###### 
+
+We assume that a full backup is created 
+
+gesti@gestitest:~$ sudo xtrabackup  --defaults-file=/etc/mysql/mysql.conf.d/backup.cnf --backup --target-dir=/data/backups/backupTest
+
+gesti@gestitest:~$ sudo ls -lsa /data/backups/backupTest/
+total 70720
+    4 drwxr-xr-x  7 root   root      4096 May  6 12:35 .
+    4 drwxr-xr-x 10 backup mysql     4096 May  6 12:35 ..
+    4 drwxr-x---  2 root   root      4096 May  6 12:35 asterisk
+    4 -rw-r-----  1 root   root       447 May  6 12:35 backup-my.cnf
+    4 -rw-r-----  1 root   root       157 May  6 12:35 binlog.000173
+    4 -rw-r-----  1 root   root        16 May  6 12:35 binlog.index
+    4 -rw-r-----  1 root   root      3520 May  6 12:35 ib_buffer_pool
+12288 -rw-r-----  1 root   root  12582912 May  6 12:35 ibdata1
+    4 drwxr-x---  2 root   root      4096 May  6 12:35 mysql
+25600 -rw-r-----  1 root   root  26214400 May  6 12:35 mysql.ibd
+    4 drwxr-x---  2 root   root      4096 May  6 12:35 performance_schema
+    4 drwxr-x---  2 root   root      4096 May  6 12:35 sys
+    4 drwxr-x---  2 root   root      4096 May  6 12:35 test
+16384 -rw-r-----  1 root   root  16777216 May  6 12:35 undo_001
+16384 -rw-r-----  1 root   root  16777216 May  6 12:35 undo_002
+    4 -rw-r-----  1 root   root        18 May  6 12:35 xtrabackup_binlog_info
+    4 -rw-r-----  1 root   root       134 May  6 12:35 xtrabackup_checkpoints
+    4 -rw-r-----  1 root   root       531 May  6 12:35 xtrabackup_info
+    4 -rw-r-----  1 root   root      2560 May  6 12:35 xtrabackup_logfile
+    4 -rw-r-----  1 root   root        39 May  6 12:35 xtrabackup_tablespaces
+
+Now, if we want to restore it, we have to prepare the backup. There is one major difference though in a way we will prepare it. We will use –export flag. 
+
+gesti@gestitest:~$ sudo xtrabackup --prepare --export --target-dir=/data/backups/backupTest/
+.
+.
+.
+.
+2024-05-06T12:37:41.791110+02:00 0 [Note] [MY-013084] [InnoDB] Log background threads are being closed...
+2024-05-06T12:37:41.821032+02:00 0 [Note] [MY-012980] [InnoDB] Shutdown completed; log sequence number 21266454
+2024-05-06T12:37:41.826818+02:00 0 [Note] [MY-011825] [Xtrabackup] completed OK!
+
+Now we can restore a particular table following this process:
+
+    1. We have to create the table using exactly the same schema as it used to have when the backup has been taken.
+    2. We have to discard its tablespace
+    3. We will copy the tablespace from the backup along with its *.cfg file
+    4. We will import new tablespace
+
+Let’s assume one of the tables has been accidentally truncated:
+
+
+mysql> select count(*) from gesti_test;
++----------+
+| count(*) |
++----------+
+|        0 |
++----------+
+
+mysql> show create table gesti_test;
+
+ CREATE TABLE `gesti_test` (
+  `id` int DEFAULT NULL,
+  `note` text
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci ;
+
+
+In this case we already have the table with a proper schema in place and we can proceed to step 2:
+
+
+mysql> ALTER TABLE asterisk.gesti_test DISCARD TABLESPACE;
+Query OK, 0 rows affected (0.04 sec)
+
+Now we have to copy the data from the backup and give the permissions 
+
+
+gesti@gestitest:~$ sudo cp /data/backups/backupTest/asterisk/gesti_test.cfg /var/lib/mysql/asterisk
+gesti@gestitest:~$ sudo cp /data/backups/backupTest/asterisk/gesti_test.ibd /var/lib/mysql/asterisk
+
+gesti@gestitest:~$ sudo chown mysql.mysql /var/lib/mysql/asterisk/gesti_test.cfg
+gesti@gestitest:~$ sudo chown mysql.mysql /var/lib/mysql/asterisk/gesti_test.ibd
+
+
+Finally, we can import the restored tablespace:
+
+mysql> ALTER TABLE asterisk.gesti_test IMPORT TABLESPACE;
+
+
+mysql> select count(*) from gesti_test;
++----------+
+| count(*) |
++----------+
+|        9 |
++----------+
+1 row in set (0.00 sec)
+
+mysql>
+mysql>
+mysql> select * from gesti_test;
++------+---------+
+| id   | note    |
++------+---------+
+|    1 | Value 1 |
+|    2 | Value 2 |
+|    3 | Value 3 |
+|    5 | Value 5 |
+|    4 | Value 4 |
+|    6 | Value 6 |
+|    7 | Value 7 |
+|    9 | Value 9 |
+|    9 | Value 9 |
++------+---------+
+9 rows in set (0.00 sec)
+
+
+
+######  Restore single table if you are using the following automatic scripts  ######
+
+gesti@gestitest:~$ sudo ls -lsa /usr/local/bin/
+
+4 -rwxrwxr-x  1 gesti gesti 3288 Apr 30 15:39 backup-mysql.sh
+4 -rwxrwxr-x  1 gesti gesti 2654 Apr 30 11:44 extract-mysql.sh
+4 -rwxrwxr-x  1 gesti gesti 2734 Apr 30 10:57 prepare-mysql.sh
+
+
+We assume the backups are created correctly by the hourly crontab backup-mysql
+
+gesti@gestitest:/home$ sudo cat /etc/cron.hourly/backup-mysql
+#!/bin/bash
+sudo -u backup systemd-cat --identifier=backup-mysql /usr/local/bin/backup-mysql.sh
+
+
+We can see the generated compressed backups 
+
+gesti@gestitest:/home$ sudo ls -lsa /data/backups/2024-05-06/
+total 2272
+   4 drwxrwxr-x  2 backup backup    4096 May  6 13:38 .
+   4 drwxr-xr-x 10 backup mysql     4096 May  6 13:37 ..
+  52 -rw-rw-r--  1 backup backup   50599 May  6 13:38 backup-progress.log
+1628 -rw-rw-r--  1 backup backup 1663617 May  6 13:37 full-05-06-2024_13-37-39.xbstream
+ 192 -rw-rw-r--  1 backup backup  188678 May  6 13:37 incremental-05-06-2024_13-37-51.xbstream
+ 192 -rw-rw-r--  1 backup backup  188455 May  6 13:37 incremental-05-06-2024_13-37-57.xbstream
+ 192 -rw-rw-r--  1 backup backup  188457 May  6 13:38 incremental-05-06-2024_13-38-01.xbstream
+   4 -rw-rw-r--  1 backup backup     139 May  6 13:38 xtrabackup_checkpoints
+   4 -rw-rw-r--  1 backup backup     736 May  6 13:38 xtrabackup_info
+
+
+Extract the Backups
+Next, let’s extract the backup files to create backup directories. Due to space and security considerations, this should normally only be done when you are ready to restore the data.
+
+We can extract the backups by passing the .xbstream backup files to the extract-mysql.sh script. Again, this must be run by the backup user:
+
+
+  { 
+   If you have the following error
+   gesti@gestitest:/data/backups/2024-05-06$ sudo -u backup extract-mysql.sh *.xbstream
+   extract-mysql.sh: Could not find the "qpress" command.  Please install it and try again.
+   
+   fix by using  
+   
+   gesti@gestitest:~$ sudo percona-release enable tools
+   gesti@gestitest:~$ sudo apt install qpress
+  }
+
+
+
+gesti@gestitest:/home$ cd /data/backups/2024-05-06/
+gesti@gestitest:/data/backups/2024-05-06$ sudo -u backup extract-mysql.sh *.xbstream
+Extraction complete! Backup directories have been extracted to the "restore" directory.
+
+The backup directories contains the raw backup files, but they are not yet in a state that MySQL can use though. To fix that, we need to prepare the files
+
+
+Prepare the Final Backup
+
+Next, we will prepare the backup files. To do so, you must be in the restore directory that contains the full- and any incremental- backups. The script will apply the changes from any incremental- directories onto the full- backup directory. Afterwards, it will apply the logs to create a consistent dataset that MySQL can use.
+
+If for any reason you don’t want to restore some of the changes, now is your last chance to remove those incremental backup directories from the restore directory (the incremental backup files will still be available in the parent directory). Any remaining incremental- directories within the current directory will be applied to the full- backup directory.
+
+When you are ready, call the prepare-mysql.sh script. Again, make sure you are in the restore directory where your individual backup directories are located:
+
+gesti@gestitest:/data/backups/2024-05-06$ cd restore/
+gesti@gestitest:/data/backups/2024-05-06/restore$ sudo -u backup prepare-mysql.sh
+Backup looks to be fully prepared.  Please check the "prepare-progress.log" file
+to verify before continuing.
+
+If everything looks correct, you can apply the restored files.
+
+First, stop MySQL and move or remove the contents of the MySQL data directory:
+
+        sudo systemctl stop mysql
+        sudo mv /var/lib/mysql/ /tmp/
+
+Then, recreate the data directory and  copy the backup files:
+
+        sudo mkdir /var/lib/mysql
+        sudo xtrabackup --copy-back --target-dir=/data/backups/2024-05-06/restore/full-05-06-2024_13-37-39
+
+Afterward the files are copied, adjust the permissions and restart the service:
+
+        sudo chown -R mysql:mysql /var/lib/mysql
+        sudo find /var/lib/mysql -type d -exec chmod 750 {} \;
+        sudo systemctl start mysql
+gesti@gestitest:/data/backups/2024-05-06/restore$
+
+
+We do not need the full backup , we need a single table 
+
+Prepare backup using the --export 
+
+gesti@gestitest:/data/backups/2024-05-06/restore$ sudo xtrabackup --prepare --export --target-dir=/data/backups/2024-05-06/restore/full-05-06-2024_13-37-39/
+
+
+We need to restore single table not all of them 
+In this case we already have the table with a proper schema in place and we can proceed to step 2:
+
+mysql> ALTER TABLE asterisk.gesti_test DISCARD TABLESPACE;
+Query OK, 0 rows affected (0.04 sec)
+
+Now we have to copy the data from the backup and give the permissions 
+
+
+gesti@gestitest:/data/backups/2024-05-06/restore$ sudo cp /data/backups/2024-05-06/restore/full-05-06-2024_13-37-39/asterisk/gesti_test.cfg /var/lib/mysql/asterisk
+gesti@gestitest:/data/backups/2024-05-06/restore$ sudo cp /data/backups/2024-05-06/restore/full-05-06-2024_13-37-39/asterisk/gesti_test.ibd /var/lib/mysql/asterisk
+
+
+gesti@gestitest:~$ sudo chown mysql.mysql /var/lib/mysql/asterisk/gesti_test.cfg
+gesti@gestitest:~$ sudo chown mysql.mysql /var/lib/mysql/asterisk/gesti_test.ibd
+
+
+Finally, we can import the restored tablespace:
+
+mysql> ALTER TABLE asterisk.gesti_test IMPORT TABLESPACE;
+
+
+mysql> select count(*) from gesti_test;
++----------+
+| count(*) |
++----------+
+|        9 |
++----------+
+1 row in set (0.00 sec)
+
+mysql>
+mysql>
+mysql> select * from gesti_test;
++------+---------+
+| id   | note    |
++------+---------+
+|    1 | Value 1 |
+|    2 | Value 2 |
+|    3 | Value 3 |
+|    5 | Value 5 |
+|    4 | Value 4 |
+|    6 | Value 6 |
+|    7 | Value 7 |
+|    9 | Value 9 |
+|    9 | Value 9 |
++------+---------+
+9 rows in set (0.00 sec)
