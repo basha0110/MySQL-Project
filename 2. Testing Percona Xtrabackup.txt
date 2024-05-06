@@ -1,0 +1,63 @@
+######  Testing Percona Xtrabackup  ###### 
+
+Step 1 - Create /etc/mysql/mysql.conf.d/backup.cnf with the following data 
+
+[client]
+user=backup
+password="5RlUSJ!-$ZRx)2?N<g3M%p"
+
+Step 2 - Create backup user and give grants
+
+CREATE USER `backup`@`localhost` IDENTIFIED WITH caching_sha2_password BY  '5RlUSJ!-$ZRx)2?N<g3M%p';
+GRANT SELECT, INSERT, CREATE, RELOAD, PROCESS, SUPER, LOCK TABLES, REPLICATION CLIENT, CREATE TABLESPACE ON *.* TO `backup`@`localhost`;
+GRANT BACKUP_ADMIN ON *.* TO `backup`@`localhost`;
+
+Step 3 - Test backup 
+
+AA. Make the Backup
+root@gestitest:~# xtrabackup  --defaults-file=/etc/mysql/mysql.conf.d/backup.cnf --backup --target-dir=/data/backups/
+
+After making a backup with the --backup option, you need to prepare it in order to restore it
+
+Data files are not point-in-time consistent until they are prepared, because they were copied at different times as the program ran, and they might have been changed while this was happening
+
+You can run the prepare operation on any machine; it does not need to be on the originating server or the server to which you intend to restore. You can copy the backup to a utility server and prepare it there
+
+BB. Prepare the backup
+root@gestitest:~# xtrabackup  --prepare --target-dir=/data/backups/
+
+It is not recommended to interrupt xtrabackup process while preparing backup because it may cause data files corruption and backup will become unusable. Backup validity is not guaranteed if prepare process was interrupted.
+
+CC. Restore the backup
+root@gestitest:~# xtrabackup --copy-back --target-dir=/data/backups/
+
+Backup needs to be prepared before it can be restored.
+The datadir must be empty before restoring the backup. Also, it’s important to note that MySQL server needs to be shut down before restore is performed. You cannot restore to a datadir of a running mysqld instance (except when importing a partial backup).
+
+If you don’t want to use  the above options, you can additionally use rsync or cp to restore the files
+
+$ rsync -avrP /data/backup/ /var/lib/mysql/
+You should check that the restored files have the correct ownership and permissions.
+
+root@gestitest:~# chown -R mysql:mysql /var/lib/mysql
+
+root@gestitest:~# sudo systemctl stop  mysql.service
+root@gestitest:~# mv /var/lib/mysql /var/lib/mysql_old
+root@gestitest:~# xtrabackup --no-defaults --copy-back --target-dir=/data/backups/ --datadir=/var/lib/mysql/
+root@gestitest:~# chown -R mysql:mysql /var/lib/mysql
+root@gestitest:~# systemctl start mysql.service
+root@gestitest:~# systemctl status mysql.service
+● mysql.service - MySQL Community Server
+     Loaded: loaded (/lib/systemd/system/mysql.service; enabled; vendor preset: enabled)
+     Active: active (running) since Mon 2024-04-29 08:21:27 UTC; 36s ago
+    Process: 12068 ExecStartPre=/usr/share/mysql/mysql-systemd-start pre (code=exited, status=0/SUCCESS)
+   Main PID: 12076 (mysqld)
+     Status: "Server is operational"
+      Tasks: 158 (limit: 3425)
+     Memory: 471.5M
+        CPU: 3.482s
+     CGroup: /system.slice/mysql.service
+             └─12076 /usr/sbin/mysqld
+
+Apr 29 08:21:24 gestitest systemd[1]: Starting MySQL Community Server...
+Apr 29 08:21:27 gestitest systemd[1]: Started MySQL Community Server.
