@@ -1,0 +1,25 @@
+######  Installl Percona XtraBackup 8.0  ######
+
+Step 1 - Download a DEB package for percona-release the repository packages from Percona web:
+
+root@gestitest:~# wget https://repo.percona.com/apt/percona-release_latest.$(lsb_release -sc)_all.deb
+
+Step 2 - Install the downloaded package with dpkg
+
+root@gestitest:~# dpkg -i percona-release_latest.jammy_all.deb
+
+Step 3 - Enable the repository
+
+root@gestitest:~# percona-release setup ps80
+
+Step 4 - Refresh the local cache to update the package information
+
+root@gestitest:~# apt update
+
+Step 5 - Install the percona-xtrabackup-80 package
+
+root@gestitest:~# sudo apt install percona-xtrabackup-80
+
+Step 6 - Version , parameters check 
+
+root@gestitest:~# xtrabackup --version-check
