@@ -191,7 +191,7 @@ set_options () {
 
 rotate_old () {
     # Remove the oldest backup in rotation
-    day_dir_to_remove="${parent_dir}/$(date --date="${days_of_backups} days ago" +%a)"
+    day_dir_to_remove="${parent_dir}/$(date --date="${days_of_backups} days ago" +%Y-%m-%d)"
 
     if [ -d "${day_dir_to_remove}" ]; then
         rm -rf "${day_dir_to_remove}"
