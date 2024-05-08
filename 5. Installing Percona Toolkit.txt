@@ -2,12 +2,7 @@
 
 https://docs.percona.com/percona-toolkit/installation.html
 
-
-
-
-
 gesti@gestitest:~$ sudo apt-get install percona-toolkit
-
 
 Generating an instance UUID for statistics
 
