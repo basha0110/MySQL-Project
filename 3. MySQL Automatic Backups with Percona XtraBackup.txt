@@ -167,7 +167,7 @@ set_options () {
     xtrabackup_args=(
         "--defaults-file=${defaults_file}"
         "--backup"
-        "--databases-exclude='information_schema mysql performance_schema sys'"
+       # "--databases-exclude='information_schema mysql performance_schema sys'"
         "--extra-lsndir=${todays_dir}"
         "--compress"
         "--stream=xbstream"
