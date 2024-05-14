@@ -415,6 +415,16 @@ fi
 
 4. Testing the MySQL Backup and Restore Scripts
 
+{
+  If the scripts are running from a source where log_bin = /var/log/mysql/mysql-bin.log is enabled the user backup doesn not have access and you will be faced by the following error 
+  xtrabackup: File '/var/log/mysql/mysql-bin.000325' not found (OS errno 13 - Permission denied)
+
+  To fix above issue you should give the backup user acces to /var/lib/mysql 
+
+  gesti@gestitest: sudo chown -R mysql:mysql /var/log/mysql
+  gesti@gestitest: sudo find /var/log/mysql -type d -exec chmod 750 {} \;
+}
+
 Perform a Full Backup
 Begin by calling the backup-mysql.sh script with the backup user:
 
