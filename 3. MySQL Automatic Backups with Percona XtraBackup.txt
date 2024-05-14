@@ -204,6 +204,9 @@ take_backup () {
     mkdir -p "${todays_dir}"
     find "${todays_dir}" -type f -name "*.incomplete" -delete
     xtrabackup "${xtrabackup_args[@]}" --target-dir="${todays_dir}" > "${todays_dir}/${backup_type}-${now}.xbstream.incomplete" 2> "${log_file}"
+
+    ### Take a no_data backup in case it needs to be restored on another server 
+    mysqldump  --defaults-extra-file="${defaults_file}" --comments --hex-blob --single-transaction -R -B --no-data --all-databases > "${todays_dir}"/no_data_"$(date +%Y-%m-%d_%H-%M-%S)".sql
     
     mv "${todays_dir}/${backup_type}-${now}.xbstream.incomplete" "${todays_dir}/${backup_type}-${now}.xbstream"
 }
