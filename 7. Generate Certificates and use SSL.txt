@@ -1,0 +1,184 @@
+Generate Certificates and use SSL
+
+https://dev.mysql.com/doc/refman/8.0/en/creating-ssl-files-using-openssl.html
+
+Important.
+To generate test files, you can press Enter to all prompts except the Common Name (e.g. server FQDN or YOUR name) [] which should be different everytime asked. To generate files for production use, you should provide nonempty responses and different Common Name (e.g. server FQDN or YOUR name) [] everytime asked.
+
+# Create clean environment 
+
+root@gestitest:~# cd /etc/mysql/
+root@gestitest:/etc/mysql# rm -rf newcerts
+root@gestitest:/etc/mysql# mkdir newcerts && cd newcerts
+
+# Create CA certificate
+
+root@gestitest:/etc/mysql/newcerts# openssl genrsa 2048 > ca-key.pem
+root@gestitest:/etc/mysql/newcerts# openssl req -new -x509 -nodes -days 3600 -key ca-key.pem -out ca.pem
+You are about to be asked to enter information that will be incorporated
+into your certificate request.
+What you are about to enter is what is called a Distinguished Name or a DN.
+There are quite a few fields but you can leave some blank
+For some fields there will be a default value,
+If you enter '.', the field will be left blank.
+-----
+Country Name (2 letter code) [AU]:AL
+State or Province Name (full name) [Some-State]:
+Locality Name (eg, city) []:
+Organization Name (eg, company) [Internet Widgits Pty Ltd]:
+Organizational Unit Name (eg, section) []:
+Common Name (e.g. server FQDN or YOUR name) []:Ergest
+Email Address []:
+
+
+# Create server certificate, remove passphrase, and sign it
+# server-cert.pem = public key, server-key.pem = private key
+
+root@gestitest:/etc/mysql/newcerts# openssl req -newkey rsa:2048 -days 3600 -nodes -keyout server-key.pem -out server-req.pem
+Ignoring -days without -x509; not generating a certificate
+.+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++*..............+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++*..+......+.........+.........+..........+...............+.....................+......+.....+...+.+.....+.+...........+............+.......+.....+.............+...+.........+..............+............+....+...+..+......+.......+............+.....+...+.+.....+......+...+...+....+........+......+....+...........+......+.+..+...............+................+......+.........+.....+.......+.....+...+....+..+................+...+.........+..+...+............+...+...+....+.........+.........+.....+.......+.....+.+..+.+.....+.......+..+......+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+.......+..+...+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++*...+....+........+.......+...+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++*...+...+..........+..+....+...............+...+...........+.......+...+.....+.........+..........+...+..................+.................+....+........+...+...+.+......+..+...+....+.....+...+................+.....+.+...+........+...........................+.+..+............+.+............+...+..+...+.+........+.+......+......+........+....+..+...+......+.+......+...+............+.....+.......+......+.........+...........+.+.....+..........+......+...+..+...+....+..+...+.......+.....+...............+.+............+..+....+.....+....+.....+.+.........+..+.+........+.......+..+.......+........+...+.........+.........+....+...+...+......+...+..+................+..+.+...........+....+......+.....+..........+.....+......+.........+......+..........+..+.+..+.......+.....+.......+...+.....+.......+.....+...+......+............+....+......+.....+......................+..+..........+.....+....+.........+.....................+.....+.......+..+...+....+......+..+......+....+..................+..+.+....................+..........+.....+....+......+...........+...+......+.......+..+.......+...+..+.............+.....+...+.........+......+...+....+........+....+...+...+..............+.+...+..+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+-----
+You are about to be asked to enter information that will be incorporated
+into your certificate request.
+What you are about to enter is what is called a Distinguished Name or a DN.
+There are quite a few fields but you can leave some blank
+For some fields there will be a default value,
+If you enter '.', the field will be left blank.
+-----
+Country Name (2 letter code) [AU]:ALB
+String too long, must be at most 2 bytes long
+Country Name (2 letter code) [AU]:
+State or Province Name (full name) [Some-State]:
+Locality Name (eg, city) []:
+Organization Name (eg, company) [Internet Widgits Pty Ltd]:
+Organizational Unit Name (eg, section) []:
+Common Name (e.g. server FQDN or YOUR name) []:ErgestBasha
+Email Address []:
+
+Please enter the following 'extra' attributes
+to be sent with your certificate request
+A challenge password []:
+An optional company name []:
+root@gestitest:/etc/mysql/newcerts# openssl rsa -in server-key.pem -out server-key.pem
+writing RSA key
+root@gestitest:/etc/mysql/newcerts# openssl x509 -req -in server-req.pem -days 3600 -CA ca.pem -CAkey ca-key.pem -set_serial 01 -out server-cert.pem
+Certificate request self-signature ok
+subject=C = AU, ST = Some-State, O = Internet Widgits Pty Ltd, CN = ErgestBasha
+
+
+# Create client certificate, remove passphrase, and sign it
+# client-cert.pem = public key, client-key.pem = private key
+
+
+root@gestitest:/etc/mysql/newcerts# openssl req -newkey rsa:2048 -days 3600 -nodes -keyout client-key.pem -out client-req.pem
+Ignoring -days without -x509; not generating a certificate
+..+....+......+.....+.+...+.....+......+......+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++*.+....+......+.........+..+...+.......+..+...+...+....+......+......+...........+.......+...........+.+.........+..+.......+..+....+......+...+......+.....+.......+..+............+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++*....+....+..+.........+..........+..+....+...........+..........+...+.....+......+.+.........+.....+...+...............+.......+.........+..+...+..........+..+....+.....+...+................+.........+.....+.+......+.....+..........+..............+....+...+........+....+...+..............+....+..+.......+...+...+......+..............+......+......+...+.+...+..+......+....+...+........+.......+.....+...+....+.....+....+..............+.+...........+...+......+.+........+...............+...+....+......+...+..+...+......+......+.......+..+....+......+...+.....+...+...+....+.....+..................+.........+.........+......+.+.....+............+.+.........+........+.............+..............+......+.+.....+......+....+..............+......+......+...+.......+..+...+....+...+.....+......+.+..............+....+..+.+........+......+...+.+......+.....+......+...+.+....................+...+...+.......+......+.....+....+...+..+...+............+......+.+.........+..+...+.......+..+............+.+...+..+.......+.....+.+.........+......+......+...............+.........+............+...+..+............+..........+..+.+..............+.+....................+...+.......+..+...+...+....+......+.....+......+.+...+...........+..........+...+......+.....+..........+......+.....+.........+.+...+.....+.+.....+.+...+...+...+......+.....+.+..+...+...+....+.....+...+...+.+..............+....+............+........+...............+.......+.....+.+...+......+......+.........+...+...+........+............+.........+.+...+..+.......+..+......+...+.........+.+..+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+...+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++*..+.+.........+......+...+............+..+...+....+...........+...+.+......+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++*..+.........+..........+.....+.............+..+......+....+...+.....+.+.........+............+.........+......+......+..+......+.+.....+.+.....+...+.+...........+...+.......+.........+...+..+......+............+.......+........+.+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+-----
+You are about to be asked to enter information that will be incorporated
+into your certificate request.
+What you are about to enter is what is called a Distinguished Name or a DN.
+There are quite a few fields but you can leave some blank
+For some fields there will be a default value,
+If you enter '.', the field will be left blank.
+-----
+Country Name (2 letter code) [AU]:ALBANIA
+String too long, must be at most 2 bytes long
+Country Name (2 letter code) [AU]:
+State or Province Name (full name) [Some-State]:
+Locality Name (eg, city) []:
+Organization Name (eg, company) [Internet Widgits Pty Ltd]:
+Organizational Unit Name (eg, section) []:
+Common Name (e.g. server FQDN or YOUR name) []:BashaErgest
+Email Address []:
+
+Please enter the following 'extra' attributes
+to be sent with your certificate request
+A challenge password []:
+An optional company name []:
+root@gestitest:/etc/mysql/newcerts# openssl rsa -in client-key.pem -out client-key.pem
+writing RSA key
+root@gestitest:/etc/mysql/newcerts# openssl x509 -req -in client-req.pem -days 3600 -CA ca.pem -CAkey ca-key.pem -set_serial 01 -out client-cert.pem
+Certificate request self-signature ok
+subject=C = AU, ST = Some-State, O = Internet Widgits Pty Ltd, CN = BashaErgest
+
+
+# After generating the certificates, verify them:
+
+root@gestitest:/etc/mysql/newcerts# openssl verify -CAfile ca.pem server-cert.pem client-cert.pem
+server-cert.pem: OK
+client-cert.pem: OK
+
+
+# After verifying the certificates, give proper permissions :
+
+root@gestitest:/etc/mysql/newcerts# chmod 400 ca-key.pem
+root@gestitest:/etc/mysql/newcerts# chmod 400 client-key.pem
+root@gestitest:/etc/mysql/newcerts# chmod 400 server-key.pem
+root@gestitest:/etc/mysql/newcerts# chmod 444 ca.pem
+root@gestitest:/etc/mysql/newcerts# chmod 444 client-cert.pem
+root@gestitest:/etc/mysql/newcerts# chmod 444 client-req.pem
+root@gestitest:/etc/mysql/newcerts# chmod 444 server-cert.pem
+root@gestitest:/etc/mysql/newcerts# chmod 444 server-req.pem
+root@gestitest:/etc/mysql/newcerts# chown mysql:mysql server-key.pem
+root@gestitest:/etc/mysql/newcerts# chown mysql:mysql client-key.pem
+root@gestitest:/etc/mysql/newcerts# chown mysql:mysql ca-key.pem
+root@gestitest:/etc/mysql/newcerts# chown mysql:mysql ca.pem
+root@gestitest:/etc/mysql/newcerts# chown mysql:mysql client-cert.pem
+root@gestitest:/etc/mysql/newcerts# chown mysql:mysql client-req.pem
+root@gestitest:/etc/mysql/newcerts# chown mysql:mysql server-cert.pem
+root@gestitest:/etc/mysql/newcerts# chown mysql:mysql server-req.pem
+
+
+# Now you have a set of files that can be used as follows:
+
+--- ca.pem: Use this to set the ssl_ca system variable on the server side and the --ssl-ca option on the client side. (The CA certificate, if used, must be the same on both sides.)
+
+--- server-cert.pem, server-key.pem: Use these to set the ssl_cert and ssl_key system variables on the server side.
+
+--- client-cert.pem, client-key.pem: Use these as the arguments to the --ssl-cert and --ssl-key options on the client side.
+
+# Example
+ I have created /etc/mysql/mysql.conf.d/perconaTest.cnf with the following content 
+ 
+[client]
+user     = perconaTest
+password = "perc0Na0123aERt"
+ssl_mode = required
+ssl_cert = /etc/mysql/newcerts/client-cert.pem
+ssl_key  = /etc/mysql/newcerts/client-key.pem
+ssl_ca   = /etc/mysql/newcerts/ca.pem
+
+On the server side
+[mysqld]
+
+#ssl
+ssl_ca   = /etc/mysql/newcerts/ca.pem
+ssl_cert = /etc/mysql/newcerts/server-cert.pem
+ssl_key  = /etc/mysql/newcerts/server-key.pem 
+
+
+
+#### Restart mysql 
+root@gestitest:~# systemctl restart mysql.service
+
+## Log in 
+
+root@gestitest:~# mysql --defaults-extra-file=/etc/mysql/mysql.conf.d/perconaTest.cnf --ssl-mode=VERIFY_CA
+Welcome to the MySQL monitor.  Commands end with ; or \g.
+Your MySQL connection id is 30
+Server version: 8.0.36-0ubuntu0.22.04.1 (Ubuntu)
+
+Copyright (c) 2000, 2024, Oracle and/or its affiliates.
+
+Oracle is a registered trademark of Oracle Corporation and/or its
+affiliates. Other names may be trademarks of their respective
+owners.
+
+Type 'help;' or '\h' for help. Type '\c' to clear the current input statement.
+
+You are enforcing ssl connection via unix socket. Please consider
+switching ssl off as it does not make connection via unix socket
+any more secure.
+mysql>
