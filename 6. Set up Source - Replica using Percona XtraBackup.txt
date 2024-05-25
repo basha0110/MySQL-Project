@@ -82,13 +82,6 @@ At the Source, issue the following to a shell:
 e.basha@dbmasterpronto:~$ sudo xtrabackup  --defaults-file=/etc/mysql/mysql.conf.d/backup.cnf --backup --databases="demo_db gesti" --target-dir=/data/backups/
 
 2024-05-08T10:31:57.801869+02:00 0 [Note] [MY-011825] [Xtrabackup] recognized client arguments: --user=backup --password=* --backup=1 --databases=demo_db gesti --target-dir=/data/backups/
-xtrabackup version 8.0.35-30 based on MySQL server 8.0.35 Linux (x86_64) (revision id: 6beb4b49)
-.
-.
-.
-.
-2024-05-08T10:32:12.206879+02:00 0 [Note] [MY-011825] [Xtrabackup] Done: Writing file /data/backups/xtrabackup_info
-2024-05-08T10:32:13.254522+02:00 0 [Note] [MY-011825] [Xtrabackup] Transaction log of lsn (1252376849278) to (1252387464757) was copied.
 2024-05-08T10:32:13.475067+02:00 0 [Note] [MY-011825] [Xtrabackup] completed OK!
 
 
@@ -97,11 +90,6 @@ This will make a copy of your MySQL data dir to the /path/to/backupdir directory
 In order for snapshot to be consistent you need to prepare the data on the source:
 
 e.basha@dbmasterpronto:~$ sudo xtrabackup --prepare --export --target-dir=/data/backups
-.
-.
-.
-.
-
 2024-05-08T10:34:27.582817+02:00 0 [Note] [MY-012980] [InnoDB] Shutdown completed; log sequence number 1252387465548
 2024-05-08T10:34:27.590178+02:00 0 [Note] [MY-011825] [Xtrabackup] completed OK!
 
