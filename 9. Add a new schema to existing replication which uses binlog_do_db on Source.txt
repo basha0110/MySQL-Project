@@ -1,0 +1,112 @@
+9. Add a new schema to existing replication which uses binlog_do_db
+
+Note.
+Master/Slave are replaced by Source/Replica in MySQL 8+ and will be deprecated in a future releases. The same applies for 'show slave status' with 'show replica status' and so on.  
+
+Step 1 -  Removing binlog-do-db(master)
+
+Remove/comment all the lines with the binlog-do-db in order to start populating the binary log with the new database data.
+
+It is a good practice that master, logs everything and it's up to slave to choose which one to replicate. If there will be another database to be added on the future there is no need to restart mysql service on the master.
+
+#binlog-do-db = db1
+#binlog-do-db = db2
+
+After commenting or removing binlog-do-db , a mysql service restart is required . 
+Before restarting mysql.service run stop slave on the slave server.
+
+mysql> stop slave;
+
+Then resetart mysql service on the master.
+
+e.basha@master:~$ sudo systemctl restart mysql.service
+
+After the service is up and running , start the slave by executing the following command on the slave
+
+mysql> start slave;
+
+Step 2 - Verify replication(slave)
+
+Verify if the replication is up to date , if not wait until it is.
+
+Check if the slave replication is up to date (SHOW SLAVE STATUS > Seconds_Behind_master). If not wait till it is.
+
+mysql> show slave status \G
+*************************** 1. row ***************************
+        Seconds_Behind_Master: 0
+1 row in set (0.00 sec)
+
+Step 3 - Stop new data entering(master)
+
+On the master keep two conections/terminal open one with the database server and one with the server(we will need this on step 6).
+
+To prevent new data entering the master run the following command and keep the session open
+
+mysql> FLUSH TABLES WITH READ LOCK;
+Query OK, 0 rows affected (0.00 sec)
+
+Step 4 - Verify replication (slave)
+
+Check replication is fully caught up and no data is replicating (read_master_log_pos and exec_master_log_pos should be the same and not changing (in show slave status;))
+
+mysql> show slave status \G
+*************************** 1. row ***************************
+          read_master_log_pos: 4
+          exec_master_log_pos: 4
+1 row in set (0.00 sec)
+
+Step 5 - Stop replication (slave)
+
+Stop data replication until you unlock the master 
+
+mysql> stop slave;
+
+Step 6 - Backup the new database (master)
+
+In the other session which you have opened with the server (mentioned in step 3) run mysqldump 
+
+e.basha@master:~$ sudo mysqldump -u root -p  --comments --hex-blob --single-transaction -R -B --databases percona > /home/e.basha/percona.sql
+
+--single-transaction --- > option if you don't want or can't do table locks
+-R                   --- > Also consider adding --routines (-R for short ) if you're database has stored procedures/functions
+-B                   --- > Include the CREATE DATABASE command.  --databases dbname (shorthand: -B dbname)
+
+Step 7 - Unlock Master (master)
+
+Once mysqldump has started running unlock the master in the session which we have executed FLUSH TABLES WITH READ LOCK in (step 3)
+
+mysql> UNLOCK TABLES;
+
+In this way your systems can continue reading and writing to the master, hopefully keeping downtime to a minimum.
+
+Step 8 - Import the new database (slave)
+
+Once mysqldump has completed, import it into the slave.
+
+To fast transfer the data from master to slave you could use scp
+
+e.basha@master:~$ sudo scp /home/e.basha/percona.sql e.basha@192.168.100.137:/home/e.basha/
+
+Import the data on the slave once data transfer has finished.
+
+e.basha@slave:~$ sudo mysql -u root -p < /home/e.basha/percona.sql
+
+Step 9 - Verify new imported database (slave)
+
+Verify if the newly imported database looks correct
+
+Step 10 - Add replicate-do-db (slave)
+
+On the [mysqld] section add the new database that you want to be replicated
+
+replicate_do_db    = percona
+
+After adding the new database restart mysql service and start slave.
+
+e.basha@slave:~$ sudo sudo systemctl restart mysql.service
+
+Start replication
+
+mysql> start slave;
+
+Once the replication comes back on, it should continue replicating from where it left off, but including the new database.
