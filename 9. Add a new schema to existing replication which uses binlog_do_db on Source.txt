@@ -1,4 +1,4 @@
-9. Add a new schema to existing replication which uses binlog_do_db
+Add a new schema to existing replication which uses binlog_do_db
 
 Note.
 Master/Slave are replaced by Source/Replica in MySQL 8+ and will be deprecated in a future releases. The same applies for 'show slave status' with 'show replica status' and so on.  
