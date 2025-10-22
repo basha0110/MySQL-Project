@@ -1,0 +1,92 @@
+Full Backup and Restore with mariadb-backup
+
+Create the user account that performs the backup
+
+CREATE USER 'backupDB'@'localhost' IDENTIFIED BY 'y2u1C?+XU2:%';
+GRANT ALL PRIVILEGES ON *.* TO 'backupDB'@'localhost';
+
+
+In a .cnf file have user and password lines
+
+web-pronto-test:~ # cat /etc/my.cnf.d/backupDB.cnf
+[mariadb-backup]
+user=backupDB
+password=y2u1C?+XU2:%
+
+
+
+To take a full backup, run the following command:
+
+web-pronto-test:~ # mariadb-backup --defaults-file=/etc/my.cnf.d/backupDB.cnf --backup --target-dir=/var/dbBackup/$(date +%F)
+
+
+The time the backup takes depends on the size of the databases or tables you're backing up. You can cancel the backup if you need to, as the backup process does not modify the database.
+Mariadb-backup writes the backup files the target directory. If the target directory doesn't exist, then it creates it. If the target directory exists and contains files, then it raises an error and aborts.
+
+Preparing the Backup for Restoration
+The data files that mariadb-backup creates in the target directory are not point-in-time consistent, given that the data files are copied at different times during the backup operation. If you try to restore from these files, InnoDB notices the inconsistencies and crashes to protect you from corruption
+
+Before you can restore from a backup, you first need to prepare it to make the data files consistent. You can do so with the --prepare option.
+
+web-pronto-test:~ # mariadb-backup --defaults-file=/etc/my.cnf.d/backupDB.cnf --prepare --target-dir=/var/dbBackup/$(date +%F)
+
+2025-09-05 13:39:46 0 [Note] InnoDB: Buffered log writes (block size=512 bytes)
+[00] 2025-09-05 13:39:46 Last binlog file /var/lib/mysql/mysql-bin.000005, position 23178589
+[00] 2025-09-05 13:39:46 completed OK!
+
+Backup Preparation Steps
+   1. Run mariadb-backup --backup. You must use a version of mariadb-backup that is compatible with the server version you are planning to upgrade from. For instance, when upgrading from MariaDB 10.4 to 10.5, you must use the 10.4 version of mariadb-backup, Another example: When upgrading from MariaDB 10.6 to 10.11, you must use the 10.6 version of mariadb-backup.
+
+   2. Run mariadb-backup --prepare, again using a compatible version of mariadb-backup, as described in the previous step.
+   
+Restoring the Backup
+
+Once the backup is complete and you have prepared the backup for restoration (previous step), you can restore the backup using either the --copy-back or the --move-back options. The --copy-back option allows you to keep the original backup files. The --move-back option actually moves the backup files to the datadir, so the original backup files are lost.
+
+First, stop the MariaDB Server process.
+Then, ensure that the datadir is empty.
+Then, run mariadb-backup with one of the options mentioned above:
+
+
+astdbtemplate:~ # service mysql stop
+astdbtemplate:~ # mv /srv/mysql/data/ /srv/mysql/dataOld/
+
+From the slave server to the source server 100.101 slave 100.102 master, commad executed on 100.101
+astdbtemplate:~ # sudo rsync -avP --rsync-path="sudo rsync" root@192.168.100.102:/var/dbBackup/2025-10-22/ /var/dbBackup/
+
+Copy back
+astdbtemplate:~ # mariadb-backup --copy-back --target-dir=/var/dbBackup/
+
+Then, you may need to fix the file permissions.
+
+astdbtemplate:~ # chown -R mysql:mysql /srv/mysql/data/
+
+Do not forget to remove auto.cnf 
+astdbtemplate:~ # rm -rf /srv/mysql/data/auto.cnf 
+
+Finally, start the MariaDB Server process.
+
+astdbtemplate:~ # service mysql start
+
+Start replication on the slave
+
+Find the position 
+
+astdbtemplate:~ # cat /srv/mysql/data/xtrabackup_info
+binlog_pos = filename 'mysql-bin.000029', position '888544203', GTID of the last change '0-1-51224864'
+
+Change the position 
+
+CHANGE MASTER TO
+ MASTER_HOST="192.168.100.102",
+ MASTER_PORT=3306,
+ MASTER_USER="replication",
+ MASTER_PASSWORD="rft-8qm97<A4R8Jz(yk",
+ MASTER_LOG_FILE='mysql-bin.000029',
+ MASTER_LOG_POS=888544203;
+
+START SLAVE ;
+SHOW SLAVE STATUS \G
+
+
+This procedure makes an exact copy of the master including user and grants. If custom users were created on slave they will be lost and needs recreation.
