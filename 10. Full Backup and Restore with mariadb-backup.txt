@@ -5,20 +5,14 @@ Create the user account that performs the backup
 CREATE USER 'backupDB'@'localhost' IDENTIFIED BY 'y2u1C?+XU2:%';
 GRANT ALL PRIVILEGES ON *.* TO 'backupDB'@'localhost';
 
-
 In a .cnf file have user and password lines
-
 web-pronto-test:~ # cat /etc/my.cnf.d/backupDB.cnf
 [mariadb-backup]
 user=backupDB
 password=y2u1C?+XU2:%
 
-
-
 To take a full backup, run the following command:
-
 web-pronto-test:~ # mariadb-backup --defaults-file=/etc/my.cnf.d/backupDB.cnf --backup --target-dir=/var/dbBackup/$(date +%F)
-
 
 The time the backup takes depends on the size of the databases or tables you're backing up. You can cancel the backup if you need to, as the backup process does not modify the database.
 Mariadb-backup writes the backup files the target directory. If the target directory doesn't exist, then it creates it. If the target directory exists and contains files, then it raises an error and aborts.
@@ -27,9 +21,7 @@ Preparing the Backup for Restoration
 The data files that mariadb-backup creates in the target directory are not point-in-time consistent, given that the data files are copied at different times during the backup operation. If you try to restore from these files, InnoDB notices the inconsistencies and crashes to protect you from corruption
 
 Before you can restore from a backup, you first need to prepare it to make the data files consistent. You can do so with the --prepare option.
-
 web-pronto-test:~ # mariadb-backup --defaults-file=/etc/my.cnf.d/backupDB.cnf --prepare --target-dir=/var/dbBackup/$(date +%F)
-
 2025-09-05 13:39:46 0 [Note] InnoDB: Buffered log writes (block size=512 bytes)
 [00] 2025-09-05 13:39:46 Last binlog file /var/lib/mysql/mysql-bin.000005, position 23178589
 [00] 2025-09-05 13:39:46 completed OK!
@@ -47,7 +39,6 @@ First, stop the MariaDB Server process.
 Then, ensure that the datadir is empty.
 Then, run mariadb-backup with one of the options mentioned above:
 
-
 astdbtemplate:~ # service mysql stop
 astdbtemplate:~ # mv /srv/mysql/data/ /srv/mysql/dataOld/
 
@@ -58,25 +49,20 @@ Copy back
 astdbtemplate:~ # mariadb-backup --copy-back --target-dir=/var/dbBackup/
 
 Then, you may need to fix the file permissions.
-
 astdbtemplate:~ # chown -R mysql:mysql /srv/mysql/data/
 
 Do not forget to remove auto.cnf 
 astdbtemplate:~ # rm -rf /srv/mysql/data/auto.cnf 
 
 Finally, start the MariaDB Server process.
-
 astdbtemplate:~ # service mysql start
 
 Start replication on the slave
-
 Find the position 
-
 astdbtemplate:~ # cat /srv/mysql/data/xtrabackup_info
 binlog_pos = filename 'mysql-bin.000029', position '888544203', GTID of the last change '0-1-51224864'
 
 Change the position 
-
 CHANGE MASTER TO
  MASTER_HOST="192.168.100.102",
  MASTER_PORT=3306,
