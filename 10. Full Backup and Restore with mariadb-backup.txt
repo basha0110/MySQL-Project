@@ -1,5 +1,7 @@
 Full Backup and Restore with mariadb-backup
 https://mariadb.com/docs/server/server-usage/backup-and-restore/mariadb-backup/setting-up-a-replica-with-mariadb-backup
+*Restore on a older version is not supported* 
+*Restore on a newer version is supported, the prepare should be done where the backup was made on the older version* 
 
 Create the user account that performs the backup
 
