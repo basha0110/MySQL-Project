@@ -1,0 +1,67 @@
+Backup and Restore specific tables with mariadb-backup
+
+
+In order to back up the database, you need to run mariadb-backup with the --backup option to tell it to perform a backup and with the --target-dir option to tell it where to place the backup files. The target directory must be empty or not exist.
+
+For a partial backup, there are a few other arguments that you can provide as well:
+
+- To tell it which databases to backup, you can provide the --databases option.
+- To tell it which databases to exclude from the backup, you can provide the --databases-exclude option.
+- To tell it which tables to backup, you can use the --tables option.
+- To tell it which tables to exclude from the backup, you can provide the --tables-exclude option.
+
+The non-file partial backup options support regex in the database and table names.
+For example, to take a backup of any database that starts with the string app1_ and any table in those databases that start with the string tab_, run the following command:
+
+$ mariadb-backup --backup --target-dir=/var/mariadb/backup/ --databases='app1 app2' --tables='tab_[0-9]+' --user=mariadb-backup --password=mypassword
+
+web-pronto-test:~ # mariadb-backup --defaults-file=/etc/my.cnf.d/backupDB.cnf --socket='/run/mysql/mysql.sock' --backup --databases='gesti' --tables='myTable employees' --target-dir=/var/dbBackup/$(date +%F)
+
+
+Preparing the Backup
+Partial backups rely on InnoDB's transportable tablespaces. For MariaDB to import tablespaces like these, InnoDB looks for a file with a .cfg extension. For mariadb-backup to create these files, you also need to add the --export option during the prepare step
+
+   
+web-pronto-test:~ # mariadb-backup --defaults-file=/etc/my.cnf.d/backupDB.cnf --socket='/run/mysql/mysql.sock' --prepare  --export --target-dir=/var/dbBackup/$(date +%F)
+
+Restoring the Backup
+Find the .ibd and .cfg files for the table in the backup, and then import them using the Importing Transportable Tablespaces for Non-partitioned Tables process.
+
+
+
+You can import a non-partitioned table by discarding the table's original tablespace, copying the table's .ibd and .cfg files from the backup location to the relevant tablespace location for the table, and then telling the server to import the tablespace.
+
+For example, the process would go like this:
+
+First, on the destination server, you need to create a copy of the table. Use the same CREATE TABLE statement that was used to create the table on the original server.
+
+CREATE TABLE `employees` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
+  `first_name` varchar(50) DEFAULT NULL,
+  `last_name` varchar(50) DEFAULT NULL,
+  `department` varchar(50) DEFAULT NULL,
+  `hire_date` date DEFAULT NULL,
+  `salary` decimal(10,2) DEFAULT NULL,
+  PRIMARY KEY (`id`)
+) ENGINE=InnoDB AUTO_INCREMENT=5 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+
+Then, use ALTER TABLE ... DISCARD TABLESPACE to discard the new table's tablespace:
+
+
+MariaDB [gesti]> ALTER TABLE employees DISCARD TABLESPACE;
+Query OK, 0 rows affected (0.024 sec)
+
+
+Then, copy the .ibd and .cfg (for MyISAM you need to copy .frm, .MYD and .MYI and there is no need to create the structure) files from the original server to the relevant directory on the target MariaDB Server.
+
+
+
+Fix permissions 
+prontoitdbs:~ # chown mysql:mysql /srv/mysql/data/gesti/*
+
+Then, once the files are in the proper directory on the target server, use ALTER TABLE ... IMPORT TABLESPACE to import the new table's tablespace:
+
+MariaDB [gesti]> ALTER TABLE employees IMPORT TABLESPACE;
+Query OK, 0 rows affected (0.006 sec)
+
